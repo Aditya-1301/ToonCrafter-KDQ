@@ -3,6 +3,7 @@ from inspect import isfunction
 import torch
 from torch import nn
 import torch.distributed as dist
+import torch.utils.checkpoint
 
 
 def gather_data(data, return_np=True):
