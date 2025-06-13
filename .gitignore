@@ -11,3 +11,6 @@ LOG.ipynb_checkpoints/
 *.ipynb_checkpoints
 .DS_Store
 __pycache__/
+baseline_evaluation.log
+baseline_evaluation_lpips.log
+baseline_results/
