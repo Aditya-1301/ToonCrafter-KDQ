@@ -28,47 +28,58 @@ class ATD12K_Dataset(Dataset):
     def __len__(self):
         return len(self.triplet_folders)
 
+
     def __getitem__(self, idx):
+        """Return a triplet (start, middle‑GT, end) and prompt.
+    
+        * Robustly picks frame1/2/3 with png/jpg/jpeg extension.
+        * Raises a clear error if any frame is missing.
+        """
         triplet_folder_path = self.triplet_folders[idx]
         base_triplet_name = os.path.basename(triplet_folder_path)
-
-        frame1_path = os.path.join(triplet_folder_path, 'frame1.png')
-        frame2_path = os.path.join(triplet_folder_path, 'frame2.png')
-        frame3_path = os.path.join(triplet_folder_path, 'frame3.png')
-        
-        if not os.path.exists(frame1_path):
-            frame1_path = os.path.join(triplet_folder_path, 'im1.png')
-            frame2_path = os.path.join(triplet_folder_path, 'im2.png')
-            frame3_path = os.path.join(triplet_folder_path, 'im3.png')
-
-        start_frame_img = Image.open(frame1_path).convert('RGB')
-        middle_frame_img = Image.open(frame2_path).convert('RGB')
-        end_frame_img = Image.open(frame3_path).convert('RGB')
-
+    
+        def _resolve_frame(basename: str) -> str:
+            """Return the existing path for basename.[png|jpg|jpeg] or raise."""
+            for ext in ("png", "jpg", "jpeg"):
+                candidate = os.path.join(triplet_folder_path, f"{basename}.{ext}")
+                if os.path.exists(candidate):
+                    return candidate
+            raise FileNotFoundError(
+                f"Could not find {basename} with any supported extension in {triplet_folder_path}"
+            )
+    
+        frame1_path = _resolve_frame("frame1")
+        frame2_path = _resolve_frame("frame2")
+        frame3_path = _resolve_frame("frame3")
+    
+        # load images and apply transforms
+        start_frame_img = Image.open(frame1_path).convert("RGB")
+        middle_frame_img = Image.open(frame2_path).convert("RGB")
+        end_frame_img = Image.open(frame3_path).convert("RGB")
+    
         start_frame = self.transform(start_frame_img)
         ground_truth_middle = self.transform(middle_frame_img)
         end_frame = self.transform(end_frame_img)
-
+    
+        # default prompt; replace with annotation for test split
         prompt = "a cartoon animation frame"
-        if self.split == 'test':
+        if self.split == "test":
             annotation_folder = os.path.join(self.annotation_path, base_triplet_name)
-            json_files = glob.glob(os.path.join(annotation_folder, '*.json'))
-            
+            json_files = glob.glob(os.path.join(annotation_folder, "*.json"))
             if json_files:
                 json_path = json_files[0]
                 try:
-                    with open(json_path, 'r') as f:
+                    with open(json_path, "r") as f:
                         annotation_data = json.load(f)
-                    # --- DEFINITIVE FIX for JSON structure ---
-                    prompt = annotation_data['general_motion_type']
+                    prompt = annotation_data["general_motion_type"]
                 except (KeyError, json.JSONDecodeError) as e:
                     print(f"Warning: Error parsing {json_path}: {e}. Using default prompt.")
             else:
-                 print(f"Warning: No JSON file found in {annotation_folder}. Using default prompt.")
-        
+                print(f"Warning: No JSON file found in {annotation_folder}. Using default prompt.")
+    
         return {
             "start_frame": start_frame,
             "end_frame": end_frame,
             "ground_truth_middle": ground_truth_middle,
-            "prompt": prompt
+            "prompt": prompt,
         }
