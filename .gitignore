@@ -14,3 +14,6 @@ __pycache__/
 baseline_evaluation.log
 baseline_evaluation_lpips.log
 baseline_results/
+lora_checkpoints/
+lora_checkpoints_full_10k/
+
