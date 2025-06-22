@@ -22,3 +22,4 @@ open_clip_torch==2.22.0
 kornia
 scikit-image
 lpips
+peft
