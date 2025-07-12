@@ -38,12 +38,93 @@ nohup python -u train_lora_domain_adapt_5.py \
   --height       512 \
   --width        512 \
   --bs           4 \
-  --epochs       20 \
-  --lr           1e-4 \
+  --epochs       10 \
+  --lr           5e-5 \
   --lora_rank    16 \
   --alpha        1.0 \
   --beta         1.0 \
   --log_img_every 1 \
   > train_final_1.log 2>&1 &
 
+---
 
+python train_lora_definitive.py \
+  --dataset_path /home/jovyan/thesis/tooncrafter/atd12k_dataset \
+  --ckpt_path checkpoints/tooncrafter_512_interp_v1/model.ckpt \
+  --config configs/inference_512_v1.0.yaml \
+  --output_dir outputs/debug_run \
+  --bs 2 \
+  --debug
+
+---
+
+python train_lora_definitive.py \
+  --dataset_path /home/jovyan/thesis/tooncrafter/atd12k_dataset \
+  --ckpt_path checkpoints/tooncrafter_512_interp_v1/model.ckpt \
+  --config configs/inference_512_v1.0.yaml \
+  --output_dir outputs/lora_final \
+  --bs 4 \
+  --epochs 20 \
+  --lr 5e-5 \
+  --lora_rank 16 \
+  --latent_weight 1.0 \
+  --pixel_weight 1.0 \
+  --save_grid_every 1
+
+---
+
+nohup python lora_script_3.py \
+--dataset_path /home/jovyan/thesis/tooncrafter/atd12k_dataset \
+--ckpt_path checkpoints/tooncrafter_512_interp_v1/model.ckpt \
+--config configs/inference_512_v1.0.yaml \
+--output_dir outputs_new/ \
+--epochs 20 \
+--bs 4 \
+--lr 1e-4 \
+--lora_rank 16 \
+--lora_alpha 16 \
+--log_img_every 1 > lora_script_3_training.log 2>&1 &
+
+---
+
+python lora_script_3.py \
+--dataset_path /home/jovyan/thesis/tooncrafter/atd12k_dataset \
+--ckpt_path checkpoints/tooncrafter_512_interp_v1/model.ckpt \
+--config configs/inference_512_v1.0.yaml \
+--output_dir outputs_new/ \
+--bs 2 \
+--debug
+
+---
+
+python lora_script_4.py \
+--dataset_path /home/jovyan/thesis/tooncrafter/atd12k_dataset \
+--ckpt_path checkpoints/tooncrafter_512_interp_v1/model.ckpt \
+--config configs/inference_512_v1.0.yaml \
+--output_dir outputs_new/ \
+--bs 4 --epochs 20 --lambda_flow 0.5  \
+--debug
+
+---
+
+nohup python lora_script_4.py \
+--dataset_path /home/jovyan/thesis/tooncrafter/atd12k_dataset \
+--ckpt_path checkpoints/tooncrafter_512_interp_v1/model.ckpt \
+--config configs/inference_512_v1.0.yaml \
+--output_dir outputs_new/ \
+--epochs 20 \
+--bs 4 \
+--lr 1e-4 \
+--lora_rank 16 \
+--lora_alpha 16 \
+--log_img_every 1
+--lambda_flow 0.5 > lora_script_4_training.log 2>&1 &
+
+---
+
+python evaluate_baseline_lora_metrics.py \
+    --output_dir "lora_evaluation_results" \
+    --dataset_path "/home/jovyan/thesis/tooncrafter/atd12k_dataset" \
+    --config "configs/inference_512_v1.0.yaml" \
+    --ckpt_path "checkpoints/tooncrafter_512_interp_v1/model.ckpt" \
+    --lora_ckpt_dir "lora_checkpoints_full_10k/checkpoint_epoch_10.pt" 
