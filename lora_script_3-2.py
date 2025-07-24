@@ -333,8 +333,7 @@ def main():
             titles = ["Start", "Ground Truth", "Prediction", "End"]
             fig, axes = plt.subplots(n_show, 4, figsize=(16, 4*n_show), squeeze=False)
             for i in range(n_show):
-                for j, (img, title) in enumerate(zip([sf[i], gt[i], pr[i], ef[i]], titles)):
-                    # FIX: Denormalize EVERY image if it's in the [-1, 1] range
+                for j, (img, title) in enumerate(zip([sf[i], gt[i], tea[i], stu[i], ef[i]], titles)):
                     if img.min() < -0.1:
                         img = (img * 0.5 + 0.5).clamp(0, 1)
                     arr = (img.permute(1,2,0).cpu().numpy() * 255).round().astype("uint8")
