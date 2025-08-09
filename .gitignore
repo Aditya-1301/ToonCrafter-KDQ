@@ -58,3 +58,7 @@ outputs_lora_2/
 outputs_lora_resume/
 outputs_new/
 untitled.py
+
+evaluate_lora_final/
+final_results/
+kd_eval_01/

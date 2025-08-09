@@ -128,3 +128,420 @@ python evaluate_baseline_lora_metrics.py \
     --config "configs/inference_512_v1.0.yaml" \
     --ckpt_path "checkpoints/tooncrafter_512_interp_v1/model.ckpt" \
     --lora_ckpt_dir "lora_checkpoints_full_10k/checkpoint_epoch_10.pt" 
+
+---
+
+python lora_script_3_patched2.py \
+  --dataset_path "/home/jovyan/thesis/tooncrafter/atd12k_dataset" \
+  --ckpt_path "checkpoints/tooncrafter_512_interp_v1/model.ckpt" \
+  --config "configs/inference_512_v1.0.yaml" \
+  --output_dir outputs_run2/ \
+  --resume_lora outputs_new/lora_latest \
+  --epochs 30 \
+  --bs 4
+
+---
+
+python train_lora_final.py \
+  --dataset_path  /home/jovyan/thesis/tooncrafter/atd12k_dataset \
+  --ckpt_path     checkpoints/tooncrafter_512_interp_v1/model.ckpt \
+  --config        configs/inference_512_v1.0.yaml \
+  --output_dir    outputs_lora_resume \
+  --resume_lora_path outputs_new/lora_best \
+  --epochs 30 \
+  --bs 4 \
+  --height 320 \
+  --width 512 \
+  --use_scheduler
+
+---
+
+nohup python train_lora_final.py \
+  --dataset_path  /home/jovyan/thesis/tooncrafter/atd12k_dataset \
+  --ckpt_path     checkpoints/tooncrafter_512_interp_v1/model.ckpt \
+  --config        configs/inference_512_v1.0.yaml \
+  --output_dir    outputs_lora \
+  --epochs 30 \
+  --bs 4 \
+  --height 320 \
+  --width 512 \
+  --use_scheduler > train_lora_final_script.log 2>&1 &
+
+---
+
+nohup python custom_utils/annotate_triplets.py \
+  --dataset_path /home/jovyan/thesis/tooncrafter/atd12k_dataset \
+  --output_file  /home/jovyan/thesis/tooncrafter/outputs_captions/atd12k_annotations.jsonl \
+  >  /home/jovyan/thesis/tooncrafter/outputs_captions/caption_log.txt 2>&1 &
+
+---
+
+# quick smoke-test (debug, 5 steps)
+python lora_script_4.py --dataset_path  /home/jovyan/thesis/tooncrafter/atd12k_dataset --ckpt_path  checkpoints/tooncrafter_512_interp_v1/model.ckpt  --config  configs/inference_512_v1.0.yaml  --output_dir  outputs_lora/debug --debug
+
+# full training, detachable
+nohup python lora_script_4.py --dataset_path  /home/jovyan/thesis/tooncrafter/atd12k_dataset --ckpt_path  checkpoints/tooncrafter_512_interp_v1/model.ckpt  --config  configs/inference_512_v1.0.yaml  --output_dir  outputs_lora  --use_scheduler > outputs_lora/train_lora_final.log 2>&1 &
+
+---
+
+python lora_script_3-2.py \
+    --dataset_path /home/jovyan/thesis/tooncrafter/atd12k_dataset \
+    --ckpt_path checkpoints/tooncrafter_512_interp_v1/model.ckpt \
+    --config configs/inference_512_v1.0.yaml \
+    --output_dir ./outputs_lora_resume/debug_resume_test \
+    --resume_dir ./outputs_new \
+    --debug
+
+---
+
+nohup python -u lora_script_3-2.py \
+    --dataset_path /home/jovyan/thesis/tooncrafter/atd12k_dataset \
+    --ckpt_path checkpoints/tooncrafter_512_interp_v1/model.ckpt \
+    --config configs/inference_512_v1.0.yaml \
+    --output_dir ./outputs_lora_2/full_run_01 \
+    --bs 4 \
+    --epochs 30 \
+    --lr 1e-4 \
+    > ./outputs_lora_2/full_run_01/training.log 2>&1 &
+
+---
+
+nohup python -u lora_script_3-2.py \
+    --dataset_path /home/jovyan/thesis/tooncrafter/atd12k_dataset \
+    --ckpt_path checkpoints/tooncrafter_512_interp_v1/model.ckpt \
+    --config configs/inference_512_v1.0.yaml \
+    --output_dir ./outputs_lora_2/full_run_02 \
+    --resume_dir ./outputs_new \
+    --bs 4 \
+    --epochs 30 \
+    --lr 1e-4 \
+    > ./outputs_lora_2/full_run_02/training_2.log 2>&1 &
+
+---
+
+python distill_student_kd.py \
+    --dataset_path /home/jovyan/thesis/tooncrafter/atd12k_dataset \
+  --teacher_config configs/inference_512_v1.0.yaml \
+  --teacher_ckpt checkpoints/tooncrafter_512_interp_v1/model.ckpt \
+  --teacher_lora_dir thesis/tooncrafter/ToonCrafter-KDQ/outputs_lora_2/full_run_02/lora_best \
+  --student_config configs/student_inference_512_v1.0.yaml \
+  --output_dir kd_debug --epochs 1 --bs 2 --deterministic
+
+---
+
+nohup python -u distill_student_kd3.py \
+    --dataset_path /home/jovyan/thesis/tooncrafter/atd12k_dataset \
+    --teacher_config configs/inference_512_v1.0.yaml \
+    --teacher_ckpt checkpoints/tooncrafter_512_interp_v1/model.ckpt \
+    --teacher_lora_dir outputs_lora_2/full_run_02/lora_best \
+    --student_config configs/student_inference_512_v1.0.yaml \
+    --output_dir ./kd_full_run_01 \
+    --epochs 20 \
+    --bs 4 \
+    --lr 1e-4 \
+    --accum 4 \
+    --deterministic \
+    > ./kd_full_run_01/distill.log 2>&1 &
+
+---
+
+python distill_student_kd3.py \
+    --dataset_path /home/jovyan/thesis/tooncrafter/atd12k_dataset \
+    --teacher_config configs/inference_512_v1.0.yaml \
+    --teacher_ckpt checkpoints/tooncrafter_512_interp_v1/model.ckpt \
+    --teacher_lora_dir outputs_lora_2/full_run_02/lora_best \
+    --student_config configs/student_inference_512_v1.0.yaml \
+    --output_dir kd_debug \
+    --epochs 1 --bs 2 --deterministic
+
+---
+
+python -u distill_student_kd8.py \
+  --dataset_path /home/jovyan/thesis/tooncrafter/atd12k_dataset \
+  --teacher_config configs/inference_512_v1.0.yaml \
+  --teacher_ckpt checkpoints/tooncrafter_512_interp_v1/model.ckpt \
+  --teacher_lora_dir outputs_lora_2/full_run_02/lora_best \
+  --student_config configs/student_inference_512_v1.0.yaml \
+  --output_dir ./kd_debug_run_01 \
+  --epochs 20 \
+  --bs 4 \
+  --lr 1e-4 \
+  --accum 4 \
+  --deterministic \
+  --debug
+
+---
+
+nohup python -u distill_student_kd8.py \
+  --dataset_path /home/jovyan/thesis/tooncrafter/atd12k_dataset \
+  --teacher_config configs/inference_512_v1.0.yaml \
+  --teacher_ckpt checkpoints/tooncrafter_512_interp_v1/model.ckpt \
+  --teacher_lora_dir outputs_lora_2/full_run_02/lora_best \
+  --student_config configs/student_inference_512_v1.0.yaml \
+  --output_dir ./kd_full_run_01 \
+  --epochs 20 \
+  --bs 4 \
+  --lr 1e-4 \
+  --accum 4 \
+  --deterministic \
+  > ./kd_full_run_01/distill.log 2>&1 &
+
+---
+
+# smoke-test
+python -u distill_student_kd9.py \
+  --dataset_path /home/jovyan/thesis/tooncrafter/atd12k_dataset \
+  --teacher_config configs/inference_512_v1.0.yaml \
+  --teacher_ckpt checkpoints/tooncrafter_512_interp_v1/model.ckpt \
+  --teacher_lora_dir outputs_lora_2/full_run_02/lora_best \
+  --student_config configs/student_inference_512_v1.0.yaml \
+  --output_dir kd_debug --epochs 1 --bs 4 --debug
+
+---
+
+python -u distill_student_kd10.py \
+  --dataset_path /home/jovyan/thesis/tooncrafter/atd12k_dataset \
+  --teacher_config configs/inference_512_v1.0.yaml \
+  --teacher_ckpt checkpoints/tooncrafter_512_interp_v1/model.ckpt \
+  --teacher_lora_dir outputs_lora_2/full_run_02/lora_best \
+  --student_config configs/student_inference_512_v1.0.yaml \
+  --output_dir kd_debug --epochs 1 --bs 4 --debug --accum 1
+
+---
+
+nohup python -u distill_student_kd11.py \
+  --dataset_path /home/jovyan/thesis/tooncrafter/atd12k_dataset \
+  --teacher_config configs/inference_512_v1.0.yaml \
+  --teacher_ckpt checkpoints/tooncrafter_512_interp_v1/model.ckpt \
+  --teacher_lora_dir outputs_lora_2/full_run_02/lora_best \
+  --student_config configs/student_inference_512_v1.0.yaml \
+  --output_dir ./kd_full_run_01 \
+  --epochs 15 \
+  --bs 4 \
+  --lr 1e-4 \
+  --accum 4 \
+  --deterministic \
+  > ./kd_full_run_01/distill.log 2>&1 &
+
+
+---
+
+# smoke-test
+python -u distill_student_kd9_2.py \
+  --dataset_path /home/jovyan/thesis/tooncrafter/atd12k_dataset \
+  --teacher_config configs/inference_512_v1.0.yaml \
+  --teacher_ckpt checkpoints/tooncrafter_512_interp_v1/model.ckpt \
+  --teacher_lora_dir outputs_lora_2/full_run_02/lora_best \
+  --student_config configs/student_inference_512_v1.0.yaml \
+  --output_dir kd_debug --epochs 1 --bs 4 --debug
+
+---
+
+python -u distill_student_kd9_2_1.py \
+  --dataset_path /home/jovyan/thesis/tooncrafter/atd12k_dataset \
+  --teacher_config configs/inference_512_v1.0.yaml \
+  --teacher_ckpt checkpoints/tooncrafter_512_interp_v1/model.ckpt \
+  --teacher_lora_dir outputs_lora_2/full_run_02/lora_best \
+  --student_config configs/student_inference_512_v1.0.yaml \
+  --resume kd_full_run_01/latest
+  --output_dir kd_debug_2 --epochs 1 --bs 4 --debug
+
+nohup python -u distill_student_kd9_2.py \
+  --dataset_path /home/jovyan/thesis/tooncrafter/atd12k_dataset \
+  --teacher_config configs/inference_512_v1.0.yaml \
+  --teacher_ckpt checkpoints/tooncrafter_512_interp_v1/model.ckpt \
+  --teacher_lora_dir outputs_lora_2/full_run_02/lora_best \
+  --student_config configs/student_inference_512_v2.0.yaml \
+  --output_dir ./kd_full_run_02 \
+  --epochs 10 \
+  --bs 4 \
+  --lr 1e-5 \
+  --accum 4 \
+  --deterministic \
+  > ./kd_full_run_02/distill.log 2>&1 &
+
+---
+
+python extract_grid_images.py epoch_0001_grid.png \
+    --out extracted_frames_epoch_0001
+
+---
+
+python calculate_lpips_structured.py extracted_frames_epoch_0001 \
+    --net vgg            \   # alex | vgg | squeeze backbone
+    --use_gpu             \   # omit if CPU-only
+    --logdir tb_logs_ep1      # optional TensorBoard dir
+
+---
+
+python lpips_cropped.py extracted_frames_epoch_0001/sequence_00/ground_truth.png extracted_frames_epoch_0001/sequence_00/teacher_pred.png extracted_frames_epoch_0001/sequence_00/student_pred.png \
+    --pad 5        \   # extra pixels above the red blob to keep
+    --net vgg     \   # LPIPS backbone
+    --use_gpu          # optional
+
+---
+
+python -u distill_student_kd_combined.py \
+  --dataset_path /home/jovyan/thesis/tooncrafter/atd12k_dataset \
+  --teacher_config configs/inference_512_v1.0.yaml \
+  --teacher_ckpt checkpoints/tooncrafter_512_interp_v1/model.ckpt \
+  --teacher_lora_dir outputs_lora_2/full_run_02/lora_best \
+  --student_config configs/student_inference_512_v2.0.yaml \
+  --output_dir kd_debug_2 --lr 1e-5 --epochs 1 --bs 4 --debug
+
+nohup python -u distill_student_kd_combined.py \
+  --dataset_path /home/jovyan/thesis/tooncrafter/atd12k_dataset \
+  --teacher_config configs/inference_512_v1.0.yaml \
+  --teacher_ckpt checkpoints/tooncrafter_512_interp_v1/model.ckpt \
+  --teacher_lora_dir outputs_lora_2/full_run_02/lora_best \
+  --student_config configs/student_inference_512_v2.0.yaml \
+  --output_dir ./kd_full_run_02 \
+  --epochs 10 \
+  --bs 4 \
+  --lr 1e-5 \
+  --accum 4 \
+  --deterministic \
+  > ./kd_full_run_02/distill.log 2>&1 &
+
+---
+
+python -u distill_student_kd9.py \
+  --dataset_path /home/jovyan/thesis/tooncrafter/atd12k_dataset \
+  --teacher_config configs/inference_512_v1.0.yaml \
+  --teacher_ckpt checkpoints/tooncrafter_512_interp_v1/model.ckpt \
+  --teacher_lora_dir outputs_lora_2/full_run_02/lora_best \
+  --student_config configs/student_inference_512_v2.0.yaml \
+  --output_dir kd_debug_3 --lr 1e-5 --epochs 1 --bs 4 --debug
+
+nohup python -u distill_student_kd9.py \
+  --dataset_path /home/jovyan/thesis/tooncrafter/atd12k_dataset \
+  --teacher_config configs/inference_512_v1.0.yaml \
+  --teacher_ckpt checkpoints/tooncrafter_512_interp_v1/model.ckpt \
+  --teacher_lora_dir outputs_lora_2/full_run_02/lora_best \
+  --student_config configs/student_inference_512_v2.0.yaml \
+  --output_dir ./kd_full_run_03 \
+  --epochs 10 \
+  --bs 4 \
+  --lr 1e-5 \
+  --accum 4 \
+  --deterministic \
+  > ./kd_full_run_03/distill.log 2>&1 &
+
+---
+
+python -u distill_student_kd_combined.py \
+  --dataset_path /home/jovyan/thesis/tooncrafter/atd12k_dataset \
+  --teacher_config configs/inference_512_v1.0.yaml \
+  --teacher_ckpt checkpoints/tooncrafter_512_interp_v1/model.ckpt \
+  --teacher_lora_dir outputs_lora_2/full_run_02/lora_best \
+  --student_config configs/student_inference_512_v2.0.yaml \
+  --output_dir kd_debug_2 --lr 1e-4 --epochs 1 --bs 4 --debug
+
+nohup python -u distill_student_kd_combined.py \
+  --dataset_path /home/jovyan/thesis/tooncrafter/atd12k_dataset \
+  --teacher_config configs/inference_512_v1.0.yaml \
+  --teacher_ckpt checkpoints/tooncrafter_512_interp_v1/model.ckpt \
+  --teacher_lora_dir outputs_lora_2/full_run_02/lora_best \
+  --student_config configs/student_inference_512_v2.0.yaml \
+  --output_dir ./kd_full_run_02 \
+  --epochs 10 \
+  --bs 4 \
+  --lr 1e-4 \
+  --accum 4 \
+  --deterministic \
+  > ./kd_full_run_02/distill.log 2>&1 &
+
+
+---
+
+python evaluate_lora_final.py \
+  --output_dir ./lora_sanity_check \
+  --dataset_path /home/jovyan/thesis/tooncrafter/atd12k_dataset \
+  --config configs/inference_512_v1.0.yaml \
+  --ckpt_path checkpoints/tooncrafter_512_interp_v1/model.ckpt \
+  --lora_ckpt_dir outputs_lora_2/full_run_02/lora_best \
+  --bs 1 \
+  --debug \
+  --save_every_n 1 \
+  --guidance_scale 7.5
+
+python evaluate_lora_final.py \
+  --output_dir ./lora_sanity_check_2 \
+  --dataset_path /home/jovyan/thesis/tooncrafter/atd12k_dataset \
+  --config configs/inference_512_v1.0.yaml \
+  --ckpt_path checkpoints/tooncrafter_512_interp_v1/model.ckpt \
+  --lora_ckpt_dir lora_rerun_final/lora_best \
+  --bs 1 \
+  --debug \
+  --save_every_n 1 \
+  --guidance_scale 7.5
+
+python evaluate_lora_final.py \
+  --output_dir ./lora_eval_01 \
+  --dataset_path /home/jovyan/thesis/tooncrafter/atd12k_dataset \
+  --config configs/inference_512_v1.0.yaml \
+  --ckpt_path checkpoints/tooncrafter_512_interp_v1/model.ckpt \
+  --lora_ckpt_dir lora_rerun_final/lora_best \
+  --bs 1 \
+  --save_every_n 200 \
+  --guidance_scale 7.5
+
+---
+
+python metric_evaluation/evaluate_baseline_metrics.py \
+  --output_dir ./kd_eval_debug_1 \
+  --dataset_path /home/jovyan/thesis/tooncrafter/atd12k_dataset \
+  --config configs/student_inference_512_v2.0.yaml \
+  --ckpt_path kd_full_run_02/latest/student.ckpt \
+  --debug \
+  --save_every_n 1
+
+nohup python -u evaluate_baseline_metrics.py \
+  --output_dir ./kd_eval_1 \
+  --dataset_path /home/jovyan/thesis/tooncrafter/atd12k_dataset \
+  --config configs/student_inference_512_v2.0.yaml \
+  --ckpt_path kd_full_run_02/latest/student.ckpt \
+  --save_every_n 200 \
+  > ./final_results/baseline/log.txt 2>&1 &
+
+---
+
+nohup python -u evaluate_lora_final.py   --output_dir ./kd_eval_01   --dataset_path /home/jovyan/thesis/tooncrafter/atd12k_dataset   --config configs/inference_512_v1.0.yaml   --ckpt_path checkpoints/tooncrafter_512_interp_v1/model.ckpt   --lora_ckpt_dir lora_rerun_final/lora_best   --bs 4   --save_every_n 200   --lora_scale 0.15 > ./evaluate_lora_final/lora_scaled_0.15/eval_lora.log 2>&1 &
+
+---
+
+python metric_evaluation/baseline_evaluation_lora_metrics_new.py \
+  --output_dir ./final_results/debug_lora_scaled_0.15 \
+  --dataset_path /home/jovyan/thesis/tooncrafter/atd12k_dataset \
+  --config configs/inference_512_v1.0.yaml \
+  --ckpt_path checkpoints/tooncrafter_512_interp_v1/model.ckpt \
+  --lora_ckpt_dir ./lora_rerun_final/lora_best \
+  --lora_scale 0.15 \
+  > ./final_results/debug_lora_scaled_0.15/debug_lora_scale_0.15.log
+
+nohup python -u metric_evaluation/baseline_evaluation_lora_metrics_new.py \
+  --output_dir ./final_results/lora_scaled_0.15 \
+  --dataset_path /home/jovyan/thesis/tooncrafter/atd12k_dataset \
+  --config configs/inference_512_v1.0.yaml \
+  --ckpt_path checkpoints/tooncrafter_512_interp_v1/model.ckpt \
+  --lora_ckpt_dir ./lora_rerun_final/lora_best \
+  --lora_scale 0.15 \
+  --full_eval \
+  --save_every_n 200 \
+  > ./final_results/lora_scaled_0.15/lora_scaled_0.15.log 2>&1 &
+
+---
+
+python metric_evaluation/evaluate_baseline_metrics.py \
+  --dataset_path /home/jovyan/thesis/tooncrafter/atd12k_dataset \
+  --config configs/inference_512_v1.0.yaml \
+  --ckpt_path checkpoints/tooncrafter_512_interp_v1/model.ckpt \
+  --output_dir ./final_results/debug_baseline_results_lpips_vgg/ \
+  --debug > ./final_results/debug_baseline_results_lpips_vgg/debug_baseline_eval_vgg_lpips.log
+
+nohup python metric_evaluation/evaluate_baseline_metrics.py \
+  --dataset_path /home/jovyan/thesis/tooncrafter/atd12k_dataset \
+  --config configs/inference_512_v1.0.yaml \
+  --ckpt_path checkpoints/tooncrafter_512_interp_v1/model.ckpt \
+  --output_dir ./final_results/baseline_results_lpips_vgg/ \
+  > ./final_results/baseline_results_lpips_vgg/baseline_eval_vgg_lpips.log 2>&1 &

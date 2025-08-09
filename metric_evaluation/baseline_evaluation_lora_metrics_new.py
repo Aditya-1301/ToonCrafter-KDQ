@@ -8,6 +8,9 @@ import torch
 import torchvision
 import numpy as np
 from PIL import Image
+
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
 from skimage.metrics import peak_signal_noise_ratio as psnr
 from skimage.metrics import structural_similarity as ssim
 import cv2
@@ -15,7 +18,6 @@ import lpips
 from pytorch_lightning import seed_everything
 from peft import PeftModel 
 
-sys.path.insert(1, os.path.join(sys.path[0], '..', '..'))
 from custom_utils.datasets import ATD12K_Dataset
 from lvdm.models.samplers.ddim import DDIMSampler
 from lvdm.models.samplers.ddim_multiplecond import DDIMSampler as DDIMSampler_multicond
@@ -32,22 +34,53 @@ def save_video_result(video_tensor, filename, save_dir, fps=8):
         os.makedirs(save_dir)
     torchvision.io.write_video(path, video_tensor, fps=fps, video_codec='h264', options={'crf': '10'})
 
-def load_model_checkpoint(model, ckpt, lora_ckpt_dir=None):
-    state_dict = torch.load(ckpt, map_location="cpu")
-    if "state_dict" in list(state_dict.keys()): state_dict = state_dict["state_dict"]
-    new_sd = OrderedDict()
-    for k, v in state_dict.items():
-        if k.startswith("model.model.diffusion_model."): new_sd[k.replace("model.model.diffusion_model.", "model.diffusion_model.")] = v
-        else: new_sd[k] = v
-    try: model.load_state_dict(new_sd, strict=True)
-    except RuntimeError as e: model.load_state_dict(new_sd, strict=False)
-    print('>>> Base model checkpoint loaded.')
+# def load_model_checkpoint(model, ckpt, lora_ckpt_dir=None):
+#     state_dict = torch.load(ckpt, map_location="cpu")
+#     if "state_dict" in list(state_dict.keys()): state_dict = state_dict["state_dict"]
+#     new_sd = OrderedDict()
+#     for k, v in state_dict.items():
+#         if k.startswith("model.model.diffusion_model."): new_sd[k.replace("model.model.diffusion_model.", "model.diffusion_model.")] = v
+#         else: new_sd[k] = v
+#     try: model.load_state_dict(new_sd, strict=True)
+#     except RuntimeError as e: model.load_state_dict(new_sd, strict=False)
+#     print('>>> Base model checkpoint loaded.')
+#     if lora_ckpt_dir:
+#         print(f">>> Loading LoRA weights from: {lora_ckpt_dir}")
+#         unet = model.model.diffusion_model
+#         lora_model = PeftModel.from_pretrained(unet, lora_ckpt_dir)
+#         model.model.diffusion_model = lora_model
+#         print('>>> LoRA weights loaded successfully.')
+#     return model
+
+def load_model_checkpoint(model, ckpt, lora_ckpt_dir=None, lora_scale=1.0):
+    print(f"[INIT] Loading base model → {ckpt}")
+    state = torch.load(ckpt, map_location="cpu")
+    state = state.get("state_dict", state)
+    model.load_state_dict(state, strict=False)
+    print("    ✔ base weights OK")
+
+    model.is_lora = False
     if lora_ckpt_dir:
-        print(f">>> Loading LoRA weights from: {lora_ckpt_dir}")
-        unet = model.model.diffusion_model
-        lora_model = PeftModel.from_pretrained(unet, lora_ckpt_dir)
-        model.model.diffusion_model = lora_model
-        print('>>> LoRA weights loaded successfully.')
+        print(f"[INIT] Attaching LoRA → {lora_ckpt_dir}")
+        cfg_file = os.path.join(lora_ckpt_dir, "adapter_config.json")
+        if not os.path.exists(cfg_file): raise FileNotFoundError(f"{cfg_file} not found.")
+        l_cfg = OmegaConf.load(cfg_file)
+        l_alpha = l_cfg.get("lora_alpha", 16)
+        
+        model.model.diffusion_model = PeftModel.from_pretrained(
+            model.model.diffusion_model, lora_ckpt_dir, is_trainable=False
+        )
+
+        for mod in model.model.diffusion_model.modules():
+            if hasattr(mod, "lora_A") and hasattr(mod, "r"):
+                rank = mod.r['default'] if isinstance(mod.r, dict) else mod.r
+                scaling_value = l_alpha / rank
+                scaling_value *= lora_scale # Apply our scaling
+                mod.scaling = {'default': scaling_value}
+        
+        print(f"    ✔ LoRA attached with scale = {lora_scale}\n")
+        model.is_lora = True
+    
     return model
 
 # (All other helper functions from the original script are removed for clarity as they are not used in this flow)
@@ -100,10 +133,10 @@ def run_evaluation(args):
     model_config = config.pop("model", OmegaConf.create())
     model = instantiate_from_config(model_config)
     model = model.cuda()
-    model = load_model_checkpoint(model, args.ckpt_path, args.lora_ckpt_dir)
+    model = load_model_checkpoint(model, args.ckpt_path, args.lora_ckpt_dir, args.lora_scale)
     model.eval()
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    lpips_loss_fn = lpips.LPIPS(net='alex').to(device)
+    lpips_loss_fn = lpips.LPIPS(net='vgg').to(device)
     full_test_dataset = ATD12K_Dataset(root_dir=args.dataset_path, video_size=(args.height, args.width), split='test')
     
     # We force a small subset for diagnostic purposes
@@ -131,9 +164,19 @@ def run_evaluation(args):
             # THE FIX: Select the first sample from the n_samples dimension
             generated_video_5d = batch_samples_6d[0, 0] # Shape: [C, T, H, W]
             
+            # if not args.full_eval:
+            #     filename = f"diagnostic_sample_idx_{i}.mp4"
+            #     save_video_result(generated_video_5d, filename, sample_save_dir, fps=8)
+
+            # --- START OF REPLACEMENT ---
+            # In diagnostic mode, save all samples. In full eval, save every N samples.
             if not args.full_eval:
                 filename = f"diagnostic_sample_idx_{i}.mp4"
                 save_video_result(generated_video_5d, filename, sample_save_dir, fps=8)
+            elif i % args.save_every_n == 0:
+                filename = f"full_eval_sample_idx_{i}.mp4"
+                save_video_result(generated_video_5d, filename, sample_save_dir, fps=8)
+            # --- END OF REPLACEMENT ---
             
             middle_idx = args.video_length // 2
             generated_frame_tensor = generated_video_5d[:, middle_idx, :, :]
@@ -174,6 +217,8 @@ def get_parser():
     parser.add_argument("--perframe_ae", action='store_true', default=False)
     parser.add_argument("--loop", action='store_true', default=False)
     parser.add_argument("--interp", action='store_true', default=True)
+    parser.add_argument("--lora_scale", type=float, default=1.0, help="Scaling factor for LoRA adapters at inference time.")
+    parser.add_argument("--save_every_n", type=int, default=200, help="During full eval, save a sample video every N iterations.")
     return parser
 
 if __name__ == '__main__':

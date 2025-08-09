@@ -207,6 +207,17 @@ class DDIMSampler(object):
                       temperature=1., noise_dropout=0., score_corrector=None, corrector_kwargs=None,
                       unconditional_guidance_scale=1., unconditional_conditioning=None,
                       uc_type=None, conditional_guidance_scale_temporal=None,mask=None,x0=None,guidance_rescale=0.0,**kwargs):
+        
+        # ----- START OF DEBUGGING BLOCK (CORRECTED) -----
+        # if hasattr(self.model, 'is_lora') and self.model.is_lora:
+        #     with torch.no_grad():
+        #         mean, std = x.mean(), x.std()
+        #         min_val, max_val = x.min(), x.max()
+        #         # Print stats for the current denoising step `t`
+        #         # THIS IS THE CORRECTED LINE
+        #         print(f"    [T={t[0].item():>4d}] Latent Stats: mean={mean:.4f}, std={std:.4f}, min={min_val:.4f}, max={max_val:.4f}")
+        # ----- END OF DEBUGGING BLOCK -----
+        
         b, *_, device = *x.shape, x.device
         if x.dim() == 5:
             is_video = True
