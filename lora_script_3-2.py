@@ -158,8 +158,33 @@ def main():
     unet = get_unet(model)
     for param in unet.parameters(): param.requires_grad = False
 
-    lora_config = LoraConfig(r=args.lora_rank, lora_alpha=args.lora_alpha, target_modules=["to_q","to_k","to_v","to_out.0"], lora_dropout=0.1, bias="none")
+    # lora_config = LoraConfig(r=args.lora_rank, lora_alpha=args.lora_alpha, target_modules=["to_q","to_k","to_v","to_out.0"], lora_dropout=0.1, bias="none")
+    # lora_unet = get_peft_model(unet, lora_config)
+
+    # --- THIS IS THE FINAL, CORRECTED BLOCK ---
+    target_modules = []
+    # Iterate through all modules in the UNet
+    for name, _ in unet.named_modules():
+        # We are looking for the linear layers (to_q, to_k, etc.) that are
+        # specifically inside a spatial cross-attention block (attn2).
+        if "attn2" in name and name.endswith((".to_q", ".to_k", ".to_v", ".to_out.0")):
+            target_modules.append(name)
+    
+    print(f"\n[INIT] Found {len(target_modules)} target linear layers for SPATIAL LoRA:")
+    for name in sorted(target_modules):
+        print(f"  ↪ {name}")
+    
+    lora_config = LoraConfig(
+        r=args.lora_rank,
+        lora_alpha=args.lora_alpha,
+        target_modules=target_modules, # Use the dynamically found linear layer names
+        lora_dropout=0.1,
+        bias="none"
+    )
+    # --- END OF CORRECTED BLOCK ---
+    
     lora_unet = get_peft_model(unet, lora_config)
+    
     trainable_params = list(filter(lambda p: p.requires_grad, lora_unet.parameters()))
     lora_unet.print_trainable_parameters()
 
@@ -324,8 +349,7 @@ def main():
         writer.flush()
 
         with open(csv_path, "a", newline="") as f:
-            csv.writer(f).writerow([epoch, train_metrics['latent'], train_metrics['lpips'], train_metrics['psnr'], train_metrics['ssim'],
-                                    val_metrics['latent'], val_metrics['lpips'], val_metrics['psnr'], val_metrics['ssim'], lr_current])
+            csv.writer(f).writerow([epoch, train_metrics['latent'], train_metrics['lpips'], train_metrics['psnr'], train_metrics['ssim'],val_metrics['latent'], val_metrics['lpips'], val_metrics['psnr'], val_metrics['ssim'], lr_current])
         
         if epoch % args.log_img_every == 0 and grid_tensors is not None:
             sf, gt, pr, ef = grid_tensors
@@ -333,7 +357,7 @@ def main():
             titles = ["Start", "Ground Truth", "Prediction", "End"]
             fig, axes = plt.subplots(n_show, 4, figsize=(16, 4*n_show), squeeze=False)
             for i in range(n_show):
-                for j, (img, title) in enumerate(zip([sf[i], gt[i], tea[i], stu[i], ef[i]], titles)):
+                for j, (img, title) in enumerate(zip([sf[i], gt[i], pr[i], ef[i]], titles)):
                     if img.min() < -0.1:
                         img = (img * 0.5 + 0.5).clamp(0, 1)
                     arr = (img.permute(1,2,0).cpu().numpy() * 255).round().astype("uint8")
