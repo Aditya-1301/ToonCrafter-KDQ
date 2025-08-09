@@ -24,6 +24,7 @@ from custom_utils.datasets import ATD12K_Dataset
 from transformers import CLIPModel, CLIPProcessor
 from torchvision.transforms.functional import to_pil_image
 from torchvision.utils import make_grid, save_image
+from custom_utils.debugging_utils import debug_tensor
 
 
 # ───────────────────────── reproducibility ──────────────────────────
@@ -91,6 +92,7 @@ def predict_middle(net, start, end, prompts, clip_v, clip_p, t_scale=.8, grad_de
         end.unsqueeze(2).repeat(1,1,T-mid-1,1,1)],2)
 
     z=net.encode_first_stage(rearrange(vid,"b c t h w -> (b t) c h w"))
+    z = debug_tensor("Latent z (input to UNet)", z, detailed=True)
     z=rearrange(z,"(b t) c h w -> b c t h w",b=B,t=T)
     z_cond=z.clone(); z_cond[:,:,mid]=0
 
@@ -103,7 +105,9 @@ def predict_middle(net, start, end, prompts, clip_v, clip_p, t_scale=.8, grad_de
 
     noise=torch.randn_like(z)
     noisy=net.q_sample(z,t_lat,noise)
+    noisy = debug_tensor("Noisy latent (input to UNet)", noisy, detailed=True)
     eps=net.model.diffusion_model(torch.cat([noisy,z_cond],1),t_lat,context=ctx)
+    eps = debug_tensor("UNet output eps (predicted noise)", eps, detailed=True)
     z_mid=net.predict_start_from_noise(noisy,t_lat,eps)[:,:,mid]
 
     # single-frame VAE decode → timesteps must be 1
@@ -112,9 +116,11 @@ def predict_middle(net, start, end, prompts, clip_v, clip_p, t_scale=.8, grad_de
         print(f"[WARN] NaNs in z_mid at step {t_lat[0].item()}: "
               f"{z_mid.isnan().sum().item()} elements – zeroing out")
         z_mid = torch.nan_to_num(z_mid, nan=0.0, posinf=0.0, neginf=0.0)
+        z_mid = debug_tensor("NaN-guarded z_mid (predicted middle frame latent)", z_mid, detailed=True)
 
     img = safe_decode_single_frame(net.first_stage_model, z_mid, net.scale_factor)
     # img = safe_decode_single_frame(net.first_stage_model, 0.25 * z_mid / net.scale_factor) t_scale=args.t_scale
+    img = debug_tensor("Decoded image", img, detailed=True)
     return img if grad_decode else img.clamp(-1, 1)
 
 

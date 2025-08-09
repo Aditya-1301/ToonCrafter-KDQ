@@ -5,6 +5,7 @@ from lvdm.models.utils_diffusion import make_ddim_sampling_parameters, make_ddim
 from lvdm.common import noise_like
 from lvdm.common import extract_into_tensor
 import copy
+from custom_utils.debugging_utils import debug_tensor
 
 
 class DDIMSampler(object):
@@ -217,6 +218,8 @@ class DDIMSampler(object):
         #         # THIS IS THE CORRECTED LINE
         #         print(f"    [T={t[0].item():>4d}] Latent Stats: mean={mean:.4f}, std={std:.4f}, min={min_val:.4f}, max={max_val:.4f}")
         # ----- END OF DEBUGGING BLOCK -----
+
+        x = debug_tensor("DDIM p_sample input", x, detailed=True)
         
         b, *_, device = *x.shape, x.device
         if x.dim() == 5:
@@ -264,6 +267,8 @@ class DDIMSampler(object):
         sigma_t = torch.full(size, sigmas[index], device=device)
         sqrt_one_minus_at = torch.full(size, sqrt_one_minus_alphas[index],device=device)
 
+        e_t = debug_tensor(f"DDIM eps (e_t) (step {index})", e_t, detailed=True)
+
         # current prediction for x_0
         if self.model.parameterization != "v":
             pred_x0 = (x - sqrt_one_minus_at * e_t) / a_t.sqrt()
@@ -286,6 +291,9 @@ class DDIMSampler(object):
             noise = torch.nn.functional.dropout(noise, p=noise_dropout)
     
         x_prev = a_prev.sqrt() * pred_x0 + dir_xt + noise
+
+        x_prev = debug_tensor(f"DDIM x_prev (step {index})", x_prev, detailed=True)
+        pred_x0 = debug_tensor(f"DDIM pred_x0 (step {index})", pred_x0, detailed=True)
 
         return x_prev, pred_x0
 

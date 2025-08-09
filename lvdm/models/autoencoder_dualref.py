@@ -19,6 +19,7 @@ except:
     logpy.warning("no module 'xformers'. Processing without...")
 
 from lvdm.modules.attention_svd import LinearAttention, MemoryEfficientCrossAttention
+from custom_utils.debugging_utils import debug_tensor
 
 
 def nonlinearity(x):
@@ -70,6 +71,7 @@ class ResnetBlock(nn.Module):
                 )
 
     def forward(self, x, temb):
+        x = debug_tensor("ResnetBlock input", x, detailed=True)
         h = x
         h = self.norm1(h)
         h = nonlinearity(h)
@@ -89,6 +91,8 @@ class ResnetBlock(nn.Module):
             else:
                 x = self.nin_shortcut(x)
 
+        x = debug_tensor("ResnetBlock output", x, detailed=True)
+        h = debug_tensor("ResnetBlock h", h, detailed=True)
         return x + h
 
 
@@ -489,6 +493,8 @@ class Decoder(nn.Module):
     def forward(self, z, ref_context=None, **kwargs):
         ## ref_context: b c 2 h w, 2 means starting and ending frame
         # assert z.shape[1:] == self.z_shape[1:]
+        z = debug_tensor("Autoencoder input", z, detailed=True)
+
         self.last_z_shape = z.shape
         # timestep embedding
         temb = None
@@ -524,6 +530,8 @@ class Decoder(nn.Module):
         h = self.conv_out(h, **kwargs)
         if self.tanh_out:
             h = torch.tanh(h)
+
+        h = debug_tensor("Autoencoder output", h, detailed=True)
         return h
 
 #####

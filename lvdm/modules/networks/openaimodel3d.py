@@ -14,6 +14,7 @@ from lvdm.basics import (
     normalization
 )
 from lvdm.modules.attention import SpatialTransformer, TemporalTransformer
+from custom_utils.debugging_utils import debug_tensor
 
 
 class TimestepBlock(nn.Module):
@@ -546,6 +547,7 @@ class UNetModel(nn.Module):
         )
 
     def forward(self, x, timesteps, context=None, features_adapter=None, fs=None, **kwargs):
+        x = debug_tensor("UNetModel input", x, detailed=True)
         b,_,t,_,_ = x.shape
         t_emb = timestep_embedding(timesteps, self.model_channels, repeat_only=False).type(x.dtype)
         emb = self.time_embed(t_emb)
@@ -600,4 +602,5 @@ class UNetModel(nn.Module):
         
         # reshape back to (b c t h w)
         y = rearrange(y, '(b t) c h w -> b c t h w', b=b)
+        y = debug_tensor("UNetModel output", y, detailed=True)
         return y
