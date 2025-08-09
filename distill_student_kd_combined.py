@@ -156,7 +156,8 @@ def main():
     ap.add_argument("--dataset_path", required=True)
     ap.add_argument("--teacher_config", required=True)
     ap.add_argument("--teacher_ckpt", required=True)
-    ap.add_argument("--teacher_lora_dir", required=True)
+    ap.add_argument("--teacher_lora_dir", required=False, default=None,
+                    help="Path to LoRA weights for the teacher model")
     ap.add_argument("--student_config", required=True)
     ap.add_argument("--output_dir", default="kd_run")
     
@@ -175,6 +176,7 @@ def main():
     ap.add_argument("--resume", help="path to previous run for resuming")
 
     ap.add_argument("--log_img_every", type=int, default=1)
+    ap.add_argument("--lora_scale", type=float, default=1.0, help="LoRA scaling factor for teacher (if LoRA is used)")
     args = ap.parse_args()
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -194,9 +196,26 @@ def main():
     teacher.load_state_dict(
         torch.load(args.teacher_ckpt, map_location="cpu")["state_dict"],
         strict=False)
-    teacher.model.diffusion_model = PeftModel.from_pretrained(
-        teacher.model.diffusion_model,
-        args.teacher_lora_dir).to(device).eval()
+    
+    if args.teacher_lora_dir:
+        teacher.model.diffusion_model = PeftModel.from_pretrained(
+            teacher.model.diffusion_model,
+            args.teacher_lora_dir).to(device).eval()
+        # Patch LoRA scaling as in evaluate_lora_final.py
+        cfg_file = Path(args.teacher_lora_dir) / "adapter_config.json"
+        if not cfg_file.exists():
+            raise FileNotFoundError(f"{cfg_file} not found – is {args.teacher_lora_dir} correct?")
+        l_cfg   = OmegaConf.load(cfg_file)
+        l_alpha = l_cfg.get("lora_alpha", 16)
+        l_rank  = l_cfg.get("rank", l_cfg.get("r", 16))
+        for mod in teacher.model.diffusion_model.modules():
+            if hasattr(mod, "lora_A") and hasattr(mod, "r"):
+                rank = mod.r['default'] if isinstance(mod.r, dict) else mod.r
+                scaling_value = l_alpha / rank
+                mod.scaling = {'default': scaling_value}
+                mod.scaling['default'] *= args.lora_scale
+        print(f"    ✔ LoRA scaling set to {args.lora_scale}")
+    
     teacher.eval(); teacher.requires_grad_(False)
 
     # ─────────────────── build student ─────────────────────────────
