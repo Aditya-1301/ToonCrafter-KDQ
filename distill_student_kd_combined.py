@@ -23,8 +23,11 @@ from utils.utils import instantiate_from_config
 from custom_utils.datasets import ATD12K_Dataset
 from transformers import CLIPModel, CLIPProcessor
 from torchvision.transforms.functional import to_pil_image
-from torchvision.utils import make_grid, save_image
+from torchvision.utils import make_grid
 from custom_utils.debugging_utils import debug_tensor
+
+from scripts.evaluation.inference import image_guided_synthesis
+
 
 
 # ───────────────────────── reproducibility ──────────────────────────
@@ -81,6 +84,7 @@ def safe_decode_single_frame(vae, z, scale):
     """
     return vae.decode(z / scale, timesteps=1)          # ← the crucial one-liner
 
+
 # ─────────────────── middle-frame predictor ─────────────────────────
 def predict_middle(net, start, end, prompts, clip_v, clip_p, t_scale=.8, grad_decode=False):
     B, dev = start.shape[0], start.device
@@ -124,6 +128,87 @@ def predict_middle(net, start, end, prompts, clip_v, clip_p, t_scale=.8, grad_de
     return img if grad_decode else img.clamp(-1, 1)
 
 
+def predict_middle_latent(net, start, end, prompts, clip_v, clip_p, t_scale=.8):
+    B, dev = start.shape[0], start.device
+    T, mid = 16, 7
+
+    vid = torch.cat([
+        start.unsqueeze(2).repeat(1,1,mid,1,1),
+        torch.zeros_like(start).unsqueeze(2),
+        end.unsqueeze(2).repeat(1,1,T-mid-1,1,1)], 2)
+
+    # VAE encode (no need to track grads through the VAE encoder)
+    with torch.no_grad():
+        z = net.encode_first_stage(rearrange(vid, "b c t h w -> (b t) c h w"))
+        z = rearrange(z, "(b t) c h w -> b c t h w", b=B, t=T)
+
+    z_cond = z.clone(); z_cond[:, :, mid] = 0
+
+    ctx = torch.cat([
+        net.get_learned_conditioning(prompts),
+        net.image_proj_model(encode_clip(clip_v, clip_p, start, dev))], 1)
+
+    t_lat = torch.full((B,), int(net.num_timesteps * t_scale),
+                       device=dev, dtype=torch.long)
+    noise = torch.randn_like(z)
+    noisy = net.q_sample(z, t_lat, noise)
+
+    eps = net.model.diffusion_model(torch.cat([noisy, z_cond], 1),
+                                    t_lat, context=ctx)
+    z_mid = net.predict_start_from_noise(noisy, t_lat, eps)[:, :, mid]
+
+    # Return middle-frame latent and the UNet's eps at the middle frame
+    return z_mid, eps[:, :, mid] 
+
+
+@torch.no_grad()
+def generate_teacher_prediction(net, start, end, prompts, ddim_steps=20,
+                                unconditional_guidance_scale=7.5):
+    B, C, H, W = start.shape
+    T = 16
+    fs, fe = 0, T - 1
+    middle_idx = T // 2 - 1
+
+    videos = torch.cat([
+        start.unsqueeze(2).repeat(1, 1, T // 2, 1, 1),
+        end.unsqueeze(2).repeat(1, 1, T // 2, 1, 1)
+    ], dim=2)  # [B, C, T, H, W]
+
+    noise_shape = [B, net.model.diffusion_model.out_channels, T, H // 8, W // 8]
+
+    batch_samples = image_guided_synthesis(
+        net, prompts, videos, noise_shape,
+        n_samples=1, ddim_steps=ddim_steps,
+        unconditional_guidance_scale=unconditional_guidance_scale,
+        interp=True, fs=fs, fe=fe
+    )
+    # Try to parse outputs defensively:
+    # expected: [n_samples, B_ret, C, T, H, W] OR [n_samples, C, T, H, W]
+    x = batch_samples[0]  # drop n_samples
+
+    if x.dim() == 5:                # [B_ret, C, T, H, W]
+        frames = x
+    elif x.dim() == 4:              # [C, T, H, W]  (no batch dim)
+        frames = x.unsqueeze(0)     # -> [1, C, T, H, W]
+    else:
+        raise RuntimeError(f"Unexpected shape from image_guided_synthesis: {x.shape}")
+
+    # If the returned batch is 1, repeat to match B (safe for our use)
+    if frames.size(0) != B:
+        if frames.size(0) == 1:
+            frames = frames.repeat(B, 1, 1, 1, 1)
+        else:
+            frames = frames[:B]
+
+    teacher_imgs = frames[:, :, middle_idx]  # [B, C, H, W]
+
+    # Ensure range matches the rest of the pipeline ([-1, 1])
+    if teacher_imgs.min() >= 0.0 and teacher_imgs.max() <= 1.0:
+        teacher_imgs = teacher_imgs * 2.0 - 1.0
+
+    return teacher_imgs
+
+
 # ─────────────────── state management ─────────────────────────────
 def save_training_state(epoch, optimizer, scheduler, scaler, best_loss, file_path):
     state = {'epoch': epoch, 'optimizer_state_dict': optimizer.state_dict(),
@@ -141,13 +226,26 @@ class DistillLoss(torch.nn.Module):
     def __init__(self, device):
         super().__init__()
         self.l1 = torch.nn.L1Loss()
+        self.l1_latent = torch.nn.SmoothL1Loss(beta=0.1)
+        self.mse = torch.nn.MSELoss()
         self.lpips = lpips.LPIPS(net="vgg").to(device).eval()
         for p in self.lpips.parameters():
             p.requires_grad_(False)
 
-    def forward(self, student_img, teacher_img):
-        return self.l1(student_img, teacher_img), \
-               self.lpips(student_img, teacher_img).mean()
+    def forward(self, s_img, t_img, s_z, t_z, s_eps, t_eps):
+        # Image-space terms (optional)
+        if (s_img is None) or (t_img is None):
+            l1_img = torch.tensor(0.0, device=s_z.device)
+            lp     = torch.tensor(0.0, device=s_z.device)
+        else:
+            s = s_img.clamp(-1, 1); t = t_img.clamp(-1, 1)
+            l1_img = self.l1(s, t)
+            lp = self.lpips(s.float(), t.float()).mean()
+
+        # Latent / eps terms
+        lz   = self.l1_latent(s_z, t_z)
+        leps = self.mse(s_eps, t_eps)
+        return l1_img, lp, lz, leps
 
 
 # ─────────────────────────── main ───────────────────────────────────
@@ -168,6 +266,9 @@ def main():
 
     ap.add_argument("--lambda_l1", type=float, default=1.0)
     ap.add_argument("--lambda_lpips", type=float, default=0.5)
+    ap.add_argument("--lambda_latent", type=float, default=0.5)
+    ap.add_argument("--lambda_eps", type=float, default=0.25)
+
     ap.add_argument("--t_scale", type=float, default=0.9)
 
     ap.add_argument("--seed", type=int, default=42)
@@ -192,31 +293,35 @@ def main():
             csv.writer(f).writerow(['epoch', 'l1', 'lpips', 'psnr', 'ssim'])
 
     # ─────────────────── build teacher (frozen) ────────────────────
-    teacher = build_model(args.teacher_config, device)
+
+    teacher = build_model(args.teacher_config, "cpu") # Load to CPU first
     teacher.load_state_dict(
         torch.load(args.teacher_ckpt, map_location="cpu")["state_dict"],
         strict=False)
     
     if args.teacher_lora_dir:
+        print(f"[INIT] Attaching LoRA to teacher from: {args.teacher_lora_dir}")
         teacher.model.diffusion_model = PeftModel.from_pretrained(
             teacher.model.diffusion_model,
-            args.teacher_lora_dir).to(device).eval()
-        # Patch LoRA scaling as in evaluate_lora_final.py
+            args.teacher_lora_dir, is_trainable=False) # Ensure it's not trainable
+        
+        # Apply inference-time scaling
         cfg_file = Path(args.teacher_lora_dir) / "adapter_config.json"
-        if not cfg_file.exists():
-            raise FileNotFoundError(f"{cfg_file} not found – is {args.teacher_lora_dir} correct?")
+        if not cfg_file.exists(): raise FileNotFoundError(f"{cfg_file} not found.")
         l_cfg   = OmegaConf.load(cfg_file)
         l_alpha = l_cfg.get("lora_alpha", 16)
-        l_rank  = l_cfg.get("rank", l_cfg.get("r", 16))
         for mod in teacher.model.diffusion_model.modules():
             if hasattr(mod, "lora_A") and hasattr(mod, "r"):
                 rank = mod.r['default'] if isinstance(mod.r, dict) else mod.r
                 scaling_value = l_alpha / rank
+                scaling_value *= args.lora_scale # Use the command-line argument
                 mod.scaling = {'default': scaling_value}
-                mod.scaling['default'] *= args.lora_scale
         print(f"    ✔ LoRA scaling set to {args.lora_scale}")
     
-    teacher.eval(); teacher.requires_grad_(False)
+    teacher = teacher.to(device)
+    teacher.eval()
+    teacher.requires_grad_(False)
+    print("    ✔ Teacher model finalized on GPU and frozen.")
 
     # ─────────────────── build student ─────────────────────────────
     student = build_model(args.student_config, device)
@@ -296,29 +401,43 @@ def main():
             s0 = batch["start_frame"].to(device)
             e2 = batch["end_frame"].to(device)
             prm = batch.get("prompt", [""] * s0.size(0))
+            need_img_loss = (args.lambda_l1 > 0 or args.lambda_lpips > 0)
 
             # Debug input stats
             if i == 0 and ep == start_ep and args.debug:
                 print(f"[DEBUG] Input stats - Start: min={s0.min():.4f}, max={s0.max():.4f}, mean={s0.mean():.4f}")
                 print(f"[DEBUG] Input stats - End: min={e2.min():.4f}, max={e2.max():.4f}, mean={e2.mean():.4f}")
 
-            # teacher inference (no-grad)
+            # --- teacher (no grad): get latent + eps, then decode for visualization/loss ---
             with torch.no_grad():
-                t_pred = predict_middle(teacher, s0, e2, prm,
-                                        clip_v, clip_p, args.t_scale)
+                if args.teacher_lora_dir is None:
+                    t_pred = generate_teacher_prediction(teacher, s0, e2, prm, ddim_steps=20).clamp(-1, 1) if need_img_loss else None
+                    t_z, t_eps = None, None
+                else:
+                    t_z, t_eps = predict_middle_latent(teacher, s0, e2, prm, clip_v, clip_p, args.t_scale)
+                    t_pred = safe_decode_single_frame(teacher.first_stage_model, t_z, teacher.scale_factor).clamp(-1, 1) if need_img_loss else None
+            
+            s_z, s_eps = predict_middle_latent(student, s0, e2, prm, clip_v, clip_p, args.t_scale)
+            s_pred = (safe_decode_single_frame(student.first_stage_model, s_z, student.scale_factor)
+                          if need_img_loss else None)
+            
+            l1_img, lp, lz, leps = loss_fn(s_pred, t_pred,
+                                           s_z, (t_z if t_z is not None else s_z.detach()*0),
+                                           s_eps, (t_eps if t_eps is not None else s_eps.detach()*0))
 
-            # student forward (gradients kept)
-            s_pred = predict_middle(student, s0, e2, prm, clip_v, clip_p, args.t_scale, grad_decode=True)
-
-            l1, lp = loss_fn(s_pred, t_pred)
-            loss = args.lambda_l1 * l1 + args.lambda_lpips * lp
+            w_lat = 0.0 if t_z is None else args.lambda_latent
+            w_eps = 0.0 if t_eps is None else args.lambda_eps
+            
+            loss = (args.lambda_l1 * l1_img
+                    + args.lambda_lpips * lp
+                    + w_lat * lz
+                    + w_eps * leps)
 
             if i == 0 and ep == start_ep:
-                print(f"[CHK] student decode requires_grad = {s_pred.requires_grad}")
-                if args.debug:
+                print(f"[CHK] student decode requires_grad = {getattr(s_pred, 'requires_grad', False)}")
+                if args.debug and need_img_loss:
                     print(f"[DEBUG] Teacher output stats - Min: {t_pred.min():.4f}, Max: {t_pred.max():.4f}, Mean: {t_pred.mean():.4f}")
                     print(f"[DEBUG] Student output stats - Min: {s_pred.min():.4f}, Max: {s_pred.max():.4f}, Mean: {s_pred.mean():.4f}")
-
             
             scaler.scale(loss / args.accum).backward()
 
@@ -348,13 +467,16 @@ def main():
                                   vb["end_frame"].to(device))
                 prm = vb.get("prompt", [""] * s0.size(0))
         
-                s_pred = predict_middle(student, s0, e2, prm, clip_v, clip_p, args.t_scale, grad_decode=True)
+                # s_pred = predict_middle(student, s0, e2, prm, clip_v, clip_p, args.t_scale, grad_decode=True)
+                s_z, s_eps = predict_middle_latent(student, s0, e2, prm, clip_v, clip_p, args.t_scale)
+                s_pred = safe_decode_single_frame(student.first_stage_model, s_z, student.scale_factor)
         
                 n = s_pred.size(0); n_tot += n
                 p01, m01 = (s_pred + 1) / 2, (mid_gt + 1) / 2
         
                 agg["l1"]    += F.l1_loss(s_pred, mid_gt).item() * n
-                lp_batch      = loss_fn.lpips(s_pred, mid_gt).mean()   # ← fixed
+                # lp_batch      = loss_fn.lpips(s_pred, mid_gt).mean()   # ← fixed
+                lp_batch      = loss_fn.lpips(s_pred.clamp(-1,1), mid_gt.clamp(-1,1)).mean()
                 agg["lpips"] += lp_batch.item() * n
                 agg["psnr"]  += psnr_m(p01, m01).item() * n
                 agg["ssim"]  += ssim_m(p01, m01).item() * n
@@ -390,9 +512,12 @@ def main():
                 sf = s0[:n_show]
                 ef = e2[:n_show]
                 gt = mid_gt[:n_show]
-                tea = predict_middle(teacher, sf, ef, prm[:n_show],
-                                     clip_v, clip_p, args.t_scale,
-                                     grad_decode=False)          # teacher vis
+                if args.teacher_lora_dir is None:
+                    tea = generate_teacher_prediction(teacher, sf, ef, prm[:n_show], ddim_steps=20).clamp(-1,1)
+                else:
+                    tea = predict_middle(teacher, sf, ef, prm[:n_show],
+                                         clip_v, clip_p, args.t_scale,
+                                         grad_decode=False)       # teacher vis
                 stu = predict_middle(student, sf, ef, prm[:n_show],
                                      clip_v, clip_p, args.t_scale,
                                      grad_decode=False)           # student vis

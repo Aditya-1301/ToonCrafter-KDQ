@@ -114,6 +114,38 @@ def _load_base_and_lora(model: torch.nn.Module,
     return model
 
 
+def _apply_norm_cast_hooks(model: torch.nn.Module) -> None:
+    """Register hooks to keep normalization layers in their parameter dtype.
+
+    Incoming activations are cast to the layer's ``weight.dtype`` (typically
+    ``float32``) before the normalization is computed.  Outputs are then cast
+    back to the model's overall dtype so downstream layers receive tensors in
+    the expected precision (e.g., ``float16``).
+    """
+    model_dtype = next(model.parameters()).dtype
+    norm_types = (
+        torch.nn.BatchNorm1d, torch.nn.BatchNorm2d, torch.nn.BatchNorm3d,
+        torch.nn.InstanceNorm1d, torch.nn.InstanceNorm2d, torch.nn.InstanceNorm3d,
+        torch.nn.LayerNorm, torch.nn.GroupNorm,
+    )
+
+    for mod in model.modules():
+        if isinstance(mod, norm_types):
+            weight_dtype = (
+                mod.weight.dtype if getattr(mod, "weight", None) is not None
+                else torch.float32
+            )
+
+            def _pre_hook(m, inp, dtype=weight_dtype):
+                return (inp[0].to(dtype),)
+
+            def _post_hook(m, inp, out, dtype=model_dtype):
+                return out.to(dtype)
+
+            mod.register_forward_pre_hook(_pre_hook)
+            mod.register_forward_hook(_post_hook)
+
+
 @torch.no_grad()
 def _encode_to_latent(model: torch.nn.Module, vid: torch.Tensor) -> torch.Tensor:
     """
@@ -196,6 +228,7 @@ def main(cfg: argparse.Namespace) -> None:
     net  = instantiate_from_config(conf.get("model", OmegaConf.create())).to(dev)
     net  = _load_base_and_lora(net, cfg.ckpt_path, cfg.lora_scale, cfg.lora_ckpt_dir)
     net.eval()
+    _apply_norm_cast_hooks(net)
 
     clip_m  = CLIPModel.from_pretrained(cfg.clip_model_name).to(dev)
     clip_p  = CLIPProcessor.from_pretrained(cfg.clip_model_name)

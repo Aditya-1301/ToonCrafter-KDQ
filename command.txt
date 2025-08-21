@@ -530,6 +530,28 @@ nohup python -u metric_evaluation/baseline_evaluation_lora_metrics_new.py \
   --save_every_n 200 \
   > ./final_results/lora_scaled_0.15/lora_scaled_0.15.log 2>&1 &
 
+nohup python -u metric_evaluation/baseline_evaluation_lora_metrics_new.py \
+  --output_dir ./final_results/lora_scaled_0.35 \
+  --dataset_path /home/jovyan/thesis/tooncrafter/atd12k_dataset \
+  --config configs/inference_512_v1.0.yaml \
+  --ckpt_path checkpoints/tooncrafter_512_interp_v1/model.ckpt \
+  --lora_ckpt_dir ./lora_rerun_final/lora_best \
+  --lora_scale 0.35 \
+  --full_eval \
+  --save_every_n 200 \
+  > ./final_results/lora_scaled_0.35/lora_scaled_0.35.log 2>&1 &
+
+nohup python -u metric_evaluation/baseline_evaluation_lora_metrics_new.py \
+  --output_dir ./final_results/lora_scaled_0.5 \
+  --dataset_path /home/jovyan/thesis/tooncrafter/atd12k_dataset \
+  --config configs/inference_512_v1.0.yaml \
+  --ckpt_path checkpoints/tooncrafter_512_interp_v1/model.ckpt \
+  --lora_ckpt_dir ./lora_rerun_final/lora_best \
+  --lora_scale 0.5 \
+  --full_eval \
+  --save_every_n 200 \
+  > ./final_results/lora_scaled_0.5/lora_scaled_0.5.log 2>&1 &
+
 ---
 
 python metric_evaluation/evaluate_baseline_metrics.py \
@@ -545,3 +567,223 @@ nohup python metric_evaluation/evaluate_baseline_metrics.py \
   --ckpt_path checkpoints/tooncrafter_512_interp_v1/model.ckpt \
   --output_dir ./final_results/baseline_results_lpips_vgg/ \
   > ./final_results/baseline_results_lpips_vgg/baseline_eval_vgg_lpips.log 2>&1 &
+
+---
+
+python check_vae.py \
+  --config configs/inference_512_v1.0.yaml \
+  --ckpt_path checkpoints/tooncrafter_512_interp_v1/model.ckpt \
+  --dataset_path /home/jovyan/thesis/tooncrafter/atd12k_dataset \
+  --split test \
+  --bs 4
+
+---
+
+python -u distill_student_kd_combined.py \
+  --dataset_path /home/jovyan/thesis/tooncrafter/atd12k_dataset \
+  --teacher_config configs/inference_512_v1.0.yaml \
+  --teacher_ckpt checkpoints/tooncrafter_512_interp_v1/model.ckpt \
+  --teacher_lora_dir outputs_lora_2/full_run_02/lora_best \
+  --student_config configs/student_inference_512_v2.0.yaml \
+  --output_dir kd_debug_2 --lr 1e-4 --epochs 1 --bs 4 --lora_scale 0.15 --debug
+
+nohup python -u distill_student_kd_combined.py \
+  --dataset_path /home/jovyan/thesis/tooncrafter/atd12k_dataset \
+  --teacher_config configs/inference_512_v1.0.yaml \
+  --teacher_ckpt checkpoints/tooncrafter_512_interp_v1/model.ckpt \
+  --teacher_lora_dir outputs_lora_2/full_run_02/lora_best \
+  --student_config configs/student_inference_512_v2.0.yaml \
+  --output_dir ./kd_full_run_02 \
+  --epochs 10 \
+  --bs 4 \
+  --lr 1e-4 \
+  --accum 4 \
+  --deterministic \
+  --lora_scale 0.15 > ./kd_full_run_02/distill_0.15.log 2>&1 &
+
+---
+
+python -u distill_student_kd_combined.py \
+  --dataset_path /home/jovyan/thesis/tooncrafter/atd12k_dataset \
+  --teacher_config configs/inference_512_v1.0.yaml \
+  --teacher_ckpt checkpoints/tooncrafter_512_interp_v1/model.ckpt \
+  --student_config configs/student_inference_512_v1.0.yaml \
+  --output_dir kd_debug_3 --lr 1e-4 --epochs 1 --bs 4 --debug
+
+nohup python -u distill_student_kd_combined.py \
+  --dataset_path /home/jovyan/thesis/tooncrafter/atd12k_dataset \
+  --teacher_config configs/inference_512_v1.0.yaml \
+  --teacher_ckpt checkpoints/tooncrafter_512_interp_v1/model.ckpt \
+  --student_config configs/student_inference_512_v1.0.yaml \
+  --output_dir ./kd_full_run_02 \
+  --epochs 5 \
+  --bs 4 \
+  --lr 1e-4 \
+  --accum 4 \
+  --deterministic \
+  > ./kd_full_run_03/distill.log 2>&1 &
+
+---
+
+python -u distill_student_kd_combined.py \
+  --dataset_path /home/jovyan/thesis/tooncrafter/atd12k_dataset \
+  --teacher_config configs/inference_512_v1.0.yaml \
+  --teacher_ckpt checkpoints/tooncrafter_512_interp_v1/model.ckpt \
+  --teacher_lora_dir outputs_lora_2/full_run_02/lora_best \
+  --student_config configs/student_inference_512_v2.0.yaml \
+  --output_dir kd_lora_fast --epochs 1 --bs 4 --debug \
+  --lambda_l1 1.0 --lambda_lpips 0.5 --lambda_latent 0.5 --lambda_eps 0.25 \
+  --t_scale 0.9
+
+python -u distill_student_kd_combined.py \
+  --dataset_path /home/jovyan/thesis/tooncrafter/atd12k_dataset \
+  --teacher_config configs/inference_512_v1.0.yaml \
+  --teacher_ckpt checkpoints/tooncrafter_512_interp_v1/model.ckpt \
+  --student_config configs/student_inference_512_v2.0.yaml \
+  --output_dir kd_base_ddim --epochs 1 --bs 2 --debug \
+  --lambda_l1 1.0 --lambda_lpips 0.5 --lambda_latent 0.5 --lambda_eps 0.25 \
+  --t_scale 0.9
+
+---
+
+# LoRA teacher (fast 1-step)
+nohup python -u distill_student_kd_combined.py \
+  --dataset_path /home/jovyan/thesis/tooncrafter/atd12k_dataset \
+  --teacher_config configs/inference_512_v1.0.yaml \
+  --teacher_ckpt checkpoints/tooncrafter_512_interp_v1/model.ckpt \
+  --teacher_lora_dir outputs_lora_2/full_run_02/lora_best \
+  --student_config configs/student_inference_512_v1.0.yaml \
+  --output_dir kd_lora_corrected --epochs 5 \
+  > ./kd_lora_corrected/distill.log 2>&1 &
+
+# Base teacher (multi-step DDIM fallback)
+nohup python -u distill_student_kd_combined.py \
+  --dataset_path /home/jovyan/thesis/tooncrafter/atd12k_dataset \
+  --teacher_config configs/inference_512_v1.0.yaml \
+  --teacher_ckpt checkpoints/tooncrafter_512_interp_v1/model.ckpt \
+  --student_config configs/student_inference_512_v2.0.yaml \
+  --output_dir kd_base_ddim --epochs 5 --bs 2 \
+  > ./kd_base_ddim/distill.log 2>&1 &
+
+---
+
+python metric_evaluation/evaluate_baseline_metrics.py \
+  --output_dir ./final_results/kd_eval_debug_new_conf_1_ls_0.15_vram_check/ \
+  --dataset_path /home/jovyan/thesis/tooncrafter/atd12k_dataset \
+  --config configs/student_inference_512_v1.0.yaml \
+  --ckpt_path kd_lora_corrected/best/student.ckpt \
+  --debug \
+  --save_every_n 1
+
+---
+
+# Step 1: Convert the model to FP16. This will be fast.
+nohup python -u ptq.py \
+  --config configs/inference_512_v1.0.yaml \
+  --ckpt_path checkpoints/tooncrafter_512_interp_v1/model.ckpt \
+  --output_ckpt_path final_results/quantized/quantized_model_fp16.ckpt \
+  --quantization_level fp16 > final_results/quantized/ptq_fp16.log 2>&1 &
+
+tail -f final_results/quantized/ptq_fp16.log
+
+nohup python -u ptq.py \
+  --config configs/inference_512_v1.0.yaml \
+  --ckpt_path checkpoints/tooncrafter_512_interp_v1/model.ckpt \
+  --output_ckpt_path final_results/quantized/quantized_model_bf16.ckpt \
+  --quantization_level bf16 > final_results/quantized/ptq_bf16.log 2>&1 &
+
+tail -f final_results/quantized/ptq_bf16.log
+
+
+# Step 2: Evaluate the newly created FP16 checkpoint. This is the long run.
+nohup python -u metric_evaluation/evaluate_quantized.py \
+  --config configs/inference_512_v1.0.yaml \
+  --quantized_ckpt_path final_results/quantized/quantized_model_fp16.ckpt \
+  --dataset_path /home/jovyan/thesis/tooncrafter/atd12k_dataset \
+  --quantization_level fp16 \
+  --bs 4 \
+  --output_dir final_results/quantized \
+  --save_every_n 1 \
+  --fps 10 \
+  --debug > ./final_results/quantized/eval_fp16_debug.log 2>&1 &
+
+tail -f final_results/quantized/eval_fp16_debug.log
+
+nohup python -u metric_evaluation/evaluate_quantized.py \
+  --config configs/inference_512_v1.0.yaml \
+  --quantized_ckpt_path final_results/quantized/quantized_model_bf16.ckpt \
+  --dataset_path /home/jovyan/thesis/tooncrafter/atd12k_dataset \
+  --quantization_level bf16 \
+  --bs 4 \
+  --output_dir final_results/quantized \
+  --save_every_n 1 \
+  --fps 10 \
+  --debug > ./final_results/quantized/eval_bf16_debug.log 2>&1 &
+
+tail -f final_results/quantized/eval_bf16_debug.log
+
+nohup python -u evaluate_quantized.py \
+  --config configs/inference_512_v1.0.yaml \
+  --quantized_ckpt_path final_results/quantized/quantized_model_fp16.ckpt \
+  --dataset_path /home/jovyan/thesis/tooncrafter/atd12k_dataset \
+  --quantization_level fp16 \
+  --bs 4 \
+  --output_dir final_results/quantized \
+  --save_every_n 200 \
+  --fps 10 > final_results/quantized/eval_fp16_full.log 2>&1 &
+
+tail -f final_results/quantized/eval_fp16_full.log
+
+nohup python -u evaluate_quantized.py \
+  --config configs/inference_512_v1.0.yaml \
+  --quantized_ckpt_path final_results/quantized/quantized_model_bf16.ckpt \
+  --dataset_path /home/jovyan/thesis/tooncrafter/atd12k_dataset \
+  --quantization_level fp16 \
+  --bs 4 \
+  --output_dir final_results/quantized \
+  --save_every_n 200 \
+  --fps 10 > final_results/quantized/eval_bf16_full.log 2>&1 &
+
+tail -f final_results/quantized/eval_bf16_full.log
+
+---
+
+# Define the samples you want to use for visual comparison
+SAMPLES="10 150 550 1250 1850"
+
+# 1. Get Baseline (FP32) data
+python generate_final_report_data.py \
+  --mode baseline \
+  --dataset_path /home/jovyan/thesis/tooncrafter/atd12k_dataset \
+  --ckpt_path checkpoints/tooncrafter_512_interp_v1/model.ckpt \
+  --sample_indices 200 400 600 800 1000 1200 1400 1600 1700 1900
+
+# 2. Get LoRA Teacher data
+python generate_final_report_data.py \
+  --mode lora --lora_scale 0.15 \
+  --dataset_path /home/jovyan/thesis/tooncrafter/atd12k_dataset \
+  --ckpt_path checkpoints/tooncrafter_512_interp_v1/model.ckpt \
+  --lora_ckpt_dir outputs_lora_2/full_run_02/lora_best \
+  --sample_indices 200 400 600 800 1000 1200 1400 1600 1700 1900
+
+# 3. Get Student Model data
+python generate_final_report_data.py \
+  --mode student \
+  --dataset_path /home/jovyan/thesis/tooncrafter/atd12k_dataset \
+  --student_config configs/student_inference_512_v1.0.yaml \
+  --student_ckpt kd_lora_corrected/best/student.ckpt \
+  --sample_indices 200 400 600 800 1000 1200 1400 1600 1700 1900
+
+# 4. Get PTQ (FP16) Model data
+python generate_final_report_data.py \
+  --mode ptq \
+  --dataset_path /home/jovyan/thesis/tooncrafter/atd12k_dataset \
+  --ptq_ckpt final_results/quantized/quantized_model_fp16.ckpt \
+  --sample_indices 200 400 600 800 1000 1200 1400 1600 1700 1900
+
+# 5. Inference for Custom Frames 
+python generate_final_report_data.py \
+  --mode baseline \
+  --dataset_path /home/jovyan/thesis/tooncrafter/atd12k_dataset \
+  --ckpt_path checkpoints/tooncrafter_512_interp_v1/model.ckpt \
+  --custom_frames_dir ./final_report_data/extreme_example/

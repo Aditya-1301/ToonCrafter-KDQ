@@ -15,5 +15,5 @@ def debug_tensor(name, tensor, detailed=False):
             print(f"Shape: {tensor.shape}")
             print(f"Device: {tensor.device}")
             print(f"Requires grad: {tensor.requires_grad}")
-        import pdb; pdb.set_trace()
+        # import pdb; pdb.set_trace()
     return tensor
