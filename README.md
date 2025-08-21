@@ -355,7 +355,7 @@ This work builds directly on **ToonCrafter**; please see their repo for credits 
 ---
 
 **Note on upstream context & dataset**
-ToonCrafter is a generative, dual-reference 3D U-Net latent diffusion model that synthesizes interpolations from two keyframes (and optional text/sketch conditioning). It was trained for 16-frame 512×320 outputs; see upstream paper/card for details. Our work adapts it to ATD-12K triplets and studies stability and compression on that dataset. ([arXiv][3], [Hugging Face][4])
+ToonCrafter is a generative, dual-reference 3D U-Net latent diffusion model that synthesizes interpolations from two keyframes (and optional text/sketch conditioning). It was trained for 16-frame 512×320 outputs; see upstream paper/card for details. Our work adapts it to ATD-12K triplets and studies stability and compression on that dataset.
 
 ---
 
