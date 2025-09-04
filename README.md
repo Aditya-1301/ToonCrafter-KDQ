@@ -3,7 +3,8 @@
 **A research fork of [ToonCrafter](https://github.com/Doubiiu/ToonCrafter)** focused on **parameter-efficient domain adaptation (LoRA)**, **model compression via Knowledge Distillation (KD)**, and **Post-Training Quantization (PTQ)**—with consistent **evaluation** and **report generation**.
 
 * Upstream paper & project page: ToonCrafter (SIGGRAPH Asia 2024) ([GitHub](https://github.com/Doubiiu/ToonCrafter), [arXiv](https://arxiv.org/abs/2405.17933))
-* Model card / checkpoint info: Hugging Face (ToonCrafter) ([Hugging Face](https://huggingface.co/Doubiiu/ToonCrafter/blob/main/model.ckpt))
+* Model card/checkpoint info: Hugging Face (Doubiiu/ToonCrafter) ([Hugging Face](https://huggingface.co/Doubiiu/ToonCrafter/blob/main/model.ckpt))
+* FP16 Quantised card/checkpoint info: Hugging Face (Aditya-1301/ToonCrafter_FP16_Quantized) ([Hugging Face](https://huggingface.co/Aditya-1301/ToonCrafter_FP16_Quantized/blob/main/quantized_model_fp16.ckpt))
 * Dataset used here: **ATD-12K** from AnimeInterp (CVPR’21) ([Kaggle](https://www.kaggle.com/datasets/marafey/atd-12-dataset), [GitHub](https://github.com/lisiyao21/AnimeInterp), [arXiv](https://arxiv.org/abs/2104.02495))
 
 ---
